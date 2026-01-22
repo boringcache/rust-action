@@ -1,0 +1,40 @@
+name: 'BoringCache Rust Save'
+description: 'Cache once. Reuse everywhere. Save cargo and target cache to BoringCache.'
+author: 'BoringCache'
+
+inputs:
+  workspace:
+    description: 'BoringCache workspace. Can be omitted if restore action was used.'
+    required: false
+    default: ''
+  working-directory:
+    description: 'Working directory for the project'
+    required: false
+    default: '.'
+  cargo-tag:
+    description: 'Cache tag for cargo. Can be omitted if restore action was used.'
+    required: false
+    default: ''
+  target-tag:
+    description: 'Cache tag for target. Can be omitted if restore action was used.'
+    required: false
+    default: ''
+  cache-cargo:
+    description: 'Save cargo registry cache'
+    required: false
+    default: 'true'
+  cache-target:
+    description: 'Save target directory cache'
+    required: false
+    default: 'true'
+  exclude:
+    description: 'Glob pattern to exclude files'
+    required: false
+
+runs:
+  using: 'node24'
+  main: '../dist/save/index.js'
+
+branding:
+  icon: 'upload'
+  color: 'orange'

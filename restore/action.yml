@@ -1,0 +1,46 @@
+name: 'BoringCache Rust Restore'
+description: 'Cache once. Reuse everywhere. Restore cargo and target cache from BoringCache, install Rust via rustup.'
+author: 'BoringCache'
+
+inputs:
+  workspace:
+    description: 'BoringCache workspace (e.g., "my-workspace" or "org/workspace")'
+    required: true
+  rust-version:
+    description: 'Rust version/channel to install. Auto-detected from rust-toolchain.toml if not specified.'
+    required: false
+  working-directory:
+    description: 'Working directory for the project'
+    required: false
+    default: '.'
+  cache-cargo:
+    description: 'Cache cargo registry and git'
+    required: false
+    default: 'true'
+  cache-target:
+    description: 'Cache target directory'
+    required: false
+    default: 'true'
+  exclude:
+    description: 'Glob pattern to exclude files from cache digest'
+    required: false
+
+outputs:
+  rust-version:
+    description: 'Installed Rust version'
+  cache-hit:
+    description: 'Whether cache was restored'
+  cargo-tag:
+    description: 'Cache tag for cargo'
+  target-tag:
+    description: 'Cache tag for target'
+  workspace:
+    description: 'Resolved workspace name'
+
+runs:
+  using: 'node24'
+  main: '../dist/restore/index.js'
+
+branding:
+  icon: 'download'
+  color: 'orange'
