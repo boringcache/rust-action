@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+
+  test:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+      - run: npm run build
+
+      - name: Test action
+        uses: ./
+        env:
+          BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+        with:
+          workspace: boringcache/actions
+
+      - run: rustc --version
+      - run: cargo --version
+
+  test-sccache:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+      - run: npm run build
+
+      - name: Setup Rust with sccache
+        uses: ./
+        env:
+          BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+        with:
+          workspace: boringcache/actions
+          sccache: true
+          sccache-cache-size: 1G
+          cache-target: false
+
+      - name: Verify setup
+        run: |
+          rustc --version
+          cargo --version
+          sccache --version
+          echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
+          echo "SCCACHE_DIR=$SCCACHE_DIR"
+          echo "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
+          echo "=== sccache server status ==="
+          sccache --show-stats || true
+
+      - name: Build test project with dependencies
+        run: |
+          echo "=== Environment check before build ==="
+          echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
+          echo "SCCACHE_DIR=$SCCACHE_DIR"
+          SCCACHE_PATH=$(which sccache)
+          echo "sccache path: $SCCACHE_PATH"
+          export RUSTC_WRAPPER="$SCCACHE_PATH"
+          echo "RUSTC_WRAPPER set to: $RUSTC_WRAPPER"
+          sccache --show-stats || true
+
+          cargo new --bin sccache-test
+          cd sccache-test
+          cat > Cargo.toml << 'EOF'
+          [package]
+          name = "sccache-test"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          serde = { version = "1", features = ["derive"] }
+          serde_json = "1"
+          EOF
+          cat > src/main.rs << 'EOF'
+          use serde::{Deserialize, Serialize};
+
+          #[derive(Serialize, Deserialize, Debug)]
+          struct Point { x: i32, y: i32 }
+
+          fn main() {
+              let point = Point { x: 1, y: 2 };
+              println!("JSON: {}", serde_json::to_string(&point).unwrap());
+          }
+          EOF
+
+          echo "=== Running cargo build ==="
+          echo "Verify RUSTC_WRAPPER before cargo: $RUSTC_WRAPPER"
+          cargo build --release -vv 2>&1 | head -100
+
+          echo "=== sccache stats after build ==="
+          sccache --show-stats
+
+      - name: Show sccache stats
+        run: |
+          echo "=== sccache stats ==="
+          sccache --show-stats
+          echo ""
+          echo "=== sccache cache directory ==="
+          ls -la ~/.cache/sccache/ 2>/dev/null || echo "Directory does not exist"

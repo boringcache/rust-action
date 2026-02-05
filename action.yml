@@ -1,0 +1,87 @@
+name: 'BoringCache Rust'
+description: 'Cache once. Reuse everywhere. Setup Rust via rustup and cache cargo + target with BoringCache.'
+author: 'BoringCache'
+
+branding:
+  icon: 'package'
+  color: 'orange'
+
+inputs:
+  cli-version:
+    description: 'BoringCache CLI version (e.g., v1.0.0). Set to "skip" to disable automatic CLI setup.'
+    required: false
+    default: 'v1.0.0'
+  workspace:
+    description: 'BoringCache workspace (e.g., "my-workspace" or "org/workspace")'
+    required: false
+  cache-tag:
+    description: 'Cache tag prefix for BoringCache. Defaults to repository name. Used as prefix for cargo/target caches.'
+    required: false
+    default: ''
+  rust-version:
+    description: 'Rust version/channel to install (e.g., "stable", "nightly", "1.89"). Auto-detected from rust-toolchain.toml if not specified.'
+    required: false
+  toolchain:
+    description: 'Alias for rust-version (dtolnay/rust-toolchain compatibility)'
+    required: false
+  targets:
+    description: 'Comma-separated list of target triples to install (e.g., "wasm32-unknown-unknown,x86_64-unknown-linux-musl")'
+    required: false
+  components:
+    description: 'Comma-separated list of components to install (e.g., "clippy,rustfmt")'
+    required: false
+  profile:
+    description: 'Rustup profile: minimal, default, or complete'
+    required: false
+    default: 'minimal'
+  working-directory:
+    description: 'Working directory for the project'
+    required: false
+    default: '.'
+  cache-cargo:
+    description: 'Cache cargo registry and git'
+    required: false
+    default: 'true'
+  cache-target:
+    description: 'Cache target directory (consider disabling if using sccache)'
+    required: false
+    default: 'true'
+  sccache:
+    description: 'Enable sccache for compilation caching. Often faster than target/ caching for larger projects.'
+    required: false
+    default: 'false'
+  sccache-cache-size:
+    description: 'Maximum sccache cache size (e.g., "5G", "10G"). Recommended to set this to avoid unbounded growth.'
+    required: false
+    default: '5G'
+  exclude:
+    description: 'Glob pattern to exclude files from cache digest (e.g., "*.out")'
+    required: false
+  save-always:
+    description: 'Save cache even if the job fails'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'node24'
+  main: 'dist/restore/index.js'
+  post: 'dist/save/index.js'
+  post-if: "success() || inputs.save-always == 'true'"
+
+outputs:
+  workspace:
+    description: 'Resolved workspace name'
+  rust-version:
+    description: 'Installed Rust version'
+  cache-tag:
+    description: 'Cache tag prefix used'
+  cargo-tag:
+    description: 'Cache tag for cargo registry'
+  target-tag:
+    description: 'Cache tag for target directory'
+  sccache-tag:
+    description: 'Cache tag for sccache directory'
+  cache-hit:
+    description: 'Whether any cache was restored'
+  sccache-hit:
+    description: 'Whether sccache cache was restored'

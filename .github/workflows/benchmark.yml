@@ -1,0 +1,212 @@
+name: Rust Setup Benchmark
+
+on:
+  workflow_dispatch:
+
+env:
+  BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+  BORINGCACHE_DEFAULT_WORKSPACE: boringcache/actions
+  RUST_APP_PATH: examples/rust-benchmark-app
+
+jobs:
+  # Baseline: dtolnay/rust-toolchain with actions/cache
+  rust-actions-cache:
+    name: "Baseline: actions/cache"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Generate Cargo.lock
+        run: cargo generate-lockfile
+        working-directory: ${{ env.RUST_APP_PATH }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.RUST_APP_PATH }}/target
+          key: cargo-benchmark-${{ runner.os }}-${{ hashFiles('examples/rust-benchmark-app/Cargo.lock') }}
+          restore-keys: cargo-benchmark-${{ runner.os }}-
+
+      - name: Cargo build
+        run: |
+          cd ${{ env.RUST_APP_PATH }}
+          START_TIME=$(date +%s%N)
+          cargo build --release
+          END_TIME=$(date +%s%N)
+          DURATION=$(( (END_TIME - START_TIME) / 1000000 ))
+          echo "actions/cache cargo build - Run ${{ matrix.run }}: ${DURATION}ms"
+          mkdir -p benchmark-results
+          echo "${DURATION}" > benchmark-results/actions-cache-run${{ matrix.run }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: actions-cache-results-${{ matrix.run }}
+          path: ${{ env.RUST_APP_PATH }}/benchmark-results/
+
+  # Test: boringcache/rust action
+  rust-boringcache:
+    name: "Test: boringcache/rust"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore from BoringCache
+        uses: ./
+        with:
+          workspace: boringcache/actions
+          rust-version: stable
+          working-directory: ${{ env.RUST_APP_PATH }}
+
+      - name: Cargo build
+        run: |
+          cd ${{ env.RUST_APP_PATH }}
+          START_TIME=$(date +%s%N)
+          cargo build --release
+          END_TIME=$(date +%s%N)
+          DURATION=$(( (END_TIME - START_TIME) / 1000000 ))
+          echo "boringcache/rust cargo build - Run ${{ matrix.run }}: ${DURATION}ms"
+          mkdir -p benchmark-results
+          echo "${DURATION}" > benchmark-results/boringcache-run${{ matrix.run }}.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boringcache-results-${{ matrix.run }}
+          path: ${{ env.RUST_APP_PATH }}/benchmark-results/
+
+  # Test: boringcache/rust sub-actions (restore + manual cargo + save)
+  rust-boringcache-subactions:
+    name: "Test: boringcache/rust sub-actions"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        run: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore cache (sub-action)
+        id: restore
+        uses: ./restore
+        with:
+          workspace: boringcache/actions
+          rust-version: stable
+          working-directory: ${{ env.RUST_APP_PATH }}
+
+      - name: Cargo build
+        run: |
+          cd ${{ env.RUST_APP_PATH }}
+          START_TIME=$(date +%s%N)
+          cargo build --release
+          END_TIME=$(date +%s%N)
+          DURATION=$(( (END_TIME - START_TIME) / 1000000 ))
+          echo "boringcache sub-actions cargo build - Run ${{ matrix.run }}: ${DURATION}ms"
+          mkdir -p benchmark-results
+          echo "${DURATION}" > benchmark-results/subactions-run${{ matrix.run }}.txt
+
+      - name: Save cache (sub-action)
+        uses: ./save
+        with:
+          workspace: boringcache/actions
+          working-directory: ${{ env.RUST_APP_PATH }}
+          cargo-tag: ${{ steps.restore.outputs.cargo-tag }}
+          target-tag: ${{ steps.restore.outputs.target-tag }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: subactions-results-${{ matrix.run }}
+          path: ${{ env.RUST_APP_PATH }}/benchmark-results/
+
+  benchmark-summary:
+    name: Generate Summary
+    runs-on: ubuntu-latest
+    needs: [rust-actions-cache, rust-boringcache, rust-boringcache-subactions]
+    if: always()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-results-*"
+          merge-multiple: true
+
+      - name: Generate summary
+        run: |
+          echo "# Rust Setup Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Cargo Build Times" >> $GITHUB_STEP_SUMMARY
+          echo "| Run | actions/cache | boringcache (combined) | boringcache (sub-actions) |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|---------------|------------------------|---------------------------|" >> $GITHUB_STEP_SUMMARY
+
+          find_result() {
+            find . -name "$1" -print -quit
+          }
+
+          for run in 1 2 3; do
+            a="N/A"
+            b="N/A"
+            s="N/A"
+            a_path=$(find_result "actions-cache-run${run}.txt")
+            b_path=$(find_result "boringcache-run${run}.txt")
+            s_path=$(find_result "subactions-run${run}.txt")
+            [[ -n "$a_path" ]] && a=$(cat "$a_path")
+            [[ -n "$b_path" ]] && b=$(cat "$b_path")
+            [[ -n "$s_path" ]] && s=$(cat "$s_path")
+            echo "| $run | ${a}ms | ${b}ms | ${s}ms |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Summary" >> $GITHUB_STEP_SUMMARY
+
+          # Calculate averages
+          aa=0; bb=0; ss=0
+          ac=0; bc=0; sc=0
+          for run in 1 2 3; do
+            a_path=$(find_result "actions-cache-run${run}.txt")
+            b_path=$(find_result "boringcache-run${run}.txt")
+            s_path=$(find_result "subactions-run${run}.txt")
+            if [[ -n "$a_path" ]]; then
+              aa=$((aa + $(cat "$a_path")))
+              ac=$((ac + 1))
+            fi
+            if [[ -n "$b_path" ]]; then
+              bb=$((bb + $(cat "$b_path")))
+              bc=$((bc + 1))
+            fi
+            if [[ -n "$s_path" ]]; then
+              ss=$((ss + $(cat "$s_path")))
+              sc=$((sc + 1))
+            fi
+          done
+
+          if [[ $ac -gt 0 ]]; then
+            aa=$((aa / ac))
+            echo "- **actions/cache average**: ${aa}ms" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ $bc -gt 0 ]]; then
+            bb=$((bb / bc))
+            echo "- **boringcache (combined) average**: ${bb}ms" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ $sc -gt 0 ]]; then
+            ss=$((ss / sc))
+            echo "- **boringcache (sub-actions) average**: ${ss}ms" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Comparison" >> $GITHUB_STEP_SUMMARY
+          if [[ $ac -gt 0 && $bc -gt 0 && $bb -gt 0 ]]; then
+            imp=$(echo "scale=2; $aa / $bb" | bc -l)
+            echo "- **Combined vs actions/cache**: ${imp}x faster" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [[ $ac -gt 0 && $sc -gt 0 && $ss -gt 0 ]]; then
+            imp=$(echo "scale=2; $aa / $ss" | bc -l)
+            echo "- **Sub-actions vs actions/cache**: ${imp}x faster" >> $GITHUB_STEP_SUMMARY
+          fi
