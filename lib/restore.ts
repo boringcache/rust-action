@@ -26,6 +26,7 @@ async function run(): Promise<void> {
     const cacheCargo = core.getInput('cache-cargo') !== 'false';
     const cacheTarget = core.getInput('cache-target') !== 'false';
     const useSccache = core.getInput('sccache') === 'true';
+    const verbose = core.getInput('verbose') === 'true';
     const sccacheCacheSize = core.getInput('sccache-cache-size') || '5G';
     const targets = core.getInput('targets');
     const components = core.getInput('components');
@@ -47,6 +48,7 @@ async function run(): Promise<void> {
     core.saveState('cacheCargo', cacheCargo.toString());
     core.saveState('cacheTarget', cacheTarget.toString());
     core.saveState('useSccache', useSccache.toString());
+    core.saveState('verbose', verbose.toString());
 
     // Setup boringcache CLI
     if (cliVersion.toLowerCase() !== 'skip') {
@@ -82,9 +84,9 @@ async function run(): Promise<void> {
       const cargoGitDir = `${cargoHome}/git`;
 
       core.info('Restoring cargo registry from BoringCache...');
-      const registryResult = await execBoringCache(
-        ['restore', workspace, `${cargoRegistryTag}:${cargoRegistryDir}`]
-      );
+      const registryArgs = ['restore', workspace, `${cargoRegistryTag}:${cargoRegistryDir}`];
+      if (verbose) registryArgs.push('--verbose');
+      const registryResult = await execBoringCache(registryArgs);
       if (wasCacheHit(registryResult)) {
         core.info('✓ Cargo registry restored from BoringCache');
         registryRestored = true;
@@ -97,9 +99,9 @@ async function run(): Promise<void> {
       const hasGitDeps = await hasGitDependencies(lockPath);
       if (hasGitDeps) {
         core.info('Restoring cargo git from BoringCache...');
-        const gitResult = await execBoringCache(
-          ['restore', workspace, `${cargoGitTag}:${cargoGitDir}`]
-        );
+        const gitArgs = ['restore', workspace, `${cargoGitTag}:${cargoGitDir}`];
+        if (verbose) gitArgs.push('--verbose');
+        const gitResult = await execBoringCache(gitArgs);
         if (wasCacheHit(gitResult)) {
           core.info('✓ Cargo git restored from BoringCache');
           gitRestored = true;
@@ -121,9 +123,9 @@ async function run(): Promise<void> {
       const targetDir = path.join(workingDir, 'target');
 
       core.info('Restoring target from BoringCache...');
-      const targetResult = await execBoringCache(
-        ['restore', workspace, `${targetTag}:${targetDir}`]
-      );
+      const targetArgs = ['restore', workspace, `${targetTag}:${targetDir}`];
+      if (verbose) targetArgs.push('--verbose');
+      const targetResult = await execBoringCache(targetArgs);
 
       if (wasCacheHit(targetResult)) {
         core.info('✓ Target restored from BoringCache');
@@ -148,9 +150,9 @@ async function run(): Promise<void> {
       // Restore sccache cache directory
       const sccacheDir = getSccacheDir();
       core.info('Restoring sccache from BoringCache...');
-      const sccacheResult = await execBoringCache(
-        ['restore', workspace, `${sccacheTag}:${sccacheDir}`]
-      );
+      const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
+      if (verbose) sccacheArgs.push('--verbose');
+      const sccacheResult = await execBoringCache(sccacheArgs);
 
       if (wasCacheHit(sccacheResult)) {
         core.info('✓ sccache restored from BoringCache');

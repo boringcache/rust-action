@@ -47,6 +47,7 @@ async function run() {
         const cargoGitTag = core.getState('cargoGitTag');
         const targetTag = core.getInput('target-tag') || core.getState('targetTag');
         const sccacheTag = core.getState('sccacheTag');
+        const verbose = core.getState('verbose') === 'true';
         const exclude = core.getInput('exclude');
         if (!workspace) {
             core.info('No workspace found, skipping save');
@@ -60,9 +61,10 @@ async function run() {
             if (cargoRegistryTag) {
                 core.info(`Saving cargo registry [${cargoRegistryTag}]...`);
                 const args = ['save', workspace, `${cargoRegistryTag}:${cargoRegistryDir}`];
-                if (exclude) {
+                if (verbose)
+                    args.push('--verbose');
+                if (exclude)
                     args.push('--exclude', exclude);
-                }
                 await (0, utils_1.execBoringCache)(args);
             }
             if (cargoGitTag) {
@@ -71,9 +73,10 @@ async function run() {
                 if (hasGitDeps) {
                     core.info(`Saving cargo git [${cargoGitTag}]...`);
                     const args = ['save', workspace, `${cargoGitTag}:${cargoGitDir}`];
-                    if (exclude) {
+                    if (verbose)
+                        args.push('--verbose');
+                    if (exclude)
                         args.push('--exclude', exclude);
-                    }
                     await (0, utils_1.execBoringCache)(args);
                 }
             }
@@ -82,9 +85,10 @@ async function run() {
             const targetDir = path.join(workingDir, 'target');
             core.info(`Saving target [${targetTag}]...`);
             const args = ['save', workspace, `${targetTag}:${targetDir}`];
-            if (exclude) {
+            if (verbose)
+                args.push('--verbose');
+            if (exclude)
                 args.push('--exclude', exclude);
-            }
             await (0, utils_1.execBoringCache)(args);
         }
         if (useSccache && sccacheTag) {
@@ -92,6 +96,10 @@ async function run() {
             const sccacheDir = (0, utils_1.getSccacheDir)();
             core.info(`Saving sccache [${sccacheTag}]...`);
             const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
+            if (verbose)
+                args.push('--verbose');
+            if (exclude)
+                args.push('--exclude', exclude);
             await (0, utils_1.execBoringCache)(args);
         }
         core.info('Save complete');

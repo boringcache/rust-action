@@ -54,6 +54,10 @@ inputs:
     description: 'Maximum sccache cache size (e.g., "5G", "10G"). Recommended to set this to avoid unbounded growth.'
     required: false
     default: '5G'
+  verbose:
+    description: 'Enable verbose CLI output for debugging'
+    required: false
+    default: 'false'
   exclude:
     description: 'Glob pattern to exclude files from cache digest (e.g., "*.out")'
     required: false
