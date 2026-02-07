@@ -13,6 +13,7 @@ async function run(): Promise<void> {
     const cargoGitTag = core.getState('cargoGitTag');
     const targetTag = core.getInput('target-tag') || core.getState('targetTag');
     const sccacheTag = core.getState('sccacheTag');
+    const verbose = core.getState('verbose') === 'true';
     const exclude = core.getInput('exclude');
 
     if (!workspace) {
@@ -31,9 +32,8 @@ async function run(): Promise<void> {
       if (cargoRegistryTag) {
         core.info(`Saving cargo registry [${cargoRegistryTag}]...`);
         const args = ['save', workspace, `${cargoRegistryTag}:${cargoRegistryDir}`];
-        if (exclude) {
-          args.push('--exclude', exclude);
-        }
+        if (verbose) args.push('--verbose');
+        if (exclude) args.push('--exclude', exclude);
         await execBoringCache(args);
       }
 
@@ -43,9 +43,8 @@ async function run(): Promise<void> {
         if (hasGitDeps) {
           core.info(`Saving cargo git [${cargoGitTag}]...`);
           const args = ['save', workspace, `${cargoGitTag}:${cargoGitDir}`];
-          if (exclude) {
-            args.push('--exclude', exclude);
-          }
+          if (verbose) args.push('--verbose');
+          if (exclude) args.push('--exclude', exclude);
           await execBoringCache(args);
         }
       }
@@ -55,9 +54,8 @@ async function run(): Promise<void> {
       const targetDir = path.join(workingDir, 'target');
       core.info(`Saving target [${targetTag}]...`);
       const args = ['save', workspace, `${targetTag}:${targetDir}`];
-      if (exclude) {
-        args.push('--exclude', exclude);
-      }
+      if (verbose) args.push('--verbose');
+      if (exclude) args.push('--exclude', exclude);
       await execBoringCache(args);
     }
 
@@ -66,6 +64,8 @@ async function run(): Promise<void> {
       const sccacheDir = getSccacheDir();
       core.info(`Saving sccache [${sccacheTag}]...`);
       const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
+      if (verbose) args.push('--verbose');
+      if (exclude) args.push('--exclude', exclude);
       await execBoringCache(args);
     }
 
