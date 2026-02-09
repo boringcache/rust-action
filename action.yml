@@ -42,6 +42,10 @@ inputs:
     description: 'Cache cargo registry and git'
     required: false
     default: 'true'
+  cache-cargo-bin:
+    description: 'Cache ~/.cargo/bin/ (installed cargo binaries like cargo-nextest). Avoids re-downloading each run.'
+    required: false
+    default: 'false'
   cache-target:
     description: 'Cache target directory (consider disabling if using sccache)'
     required: false
@@ -83,6 +87,8 @@ outputs:
     description: 'Cache tag for cargo registry'
   target-tag:
     description: 'Cache tag for target directory'
+  cargo-bin-tag:
+    description: 'Cache tag for cargo bin directory'
   sccache-tag:
     description: 'Cache tag for sccache directory'
   cache-hit:

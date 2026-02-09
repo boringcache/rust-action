@@ -13,6 +13,7 @@ import {
   RustToolchainOptions,
   installSccache,
   configureSccacheEnv,
+  startSccacheServer,
   getSccacheDir
 } from './utils';
 import * as path from 'path';
@@ -24,6 +25,7 @@ async function run(): Promise<void> {
     const inputVersion = core.getInput('rust-version') || core.getInput('toolchain');
     const workingDir = core.getInput('working-directory') || process.cwd();
     const cacheCargo = core.getInput('cache-cargo') !== 'false';
+    const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true';
     const cacheTarget = core.getInput('cache-target') !== 'false';
     const useSccache = core.getInput('sccache') === 'true';
     const verbose = core.getInput('verbose') === 'true';
@@ -46,6 +48,7 @@ async function run(): Promise<void> {
     core.saveState('rustVersion', rustVersion);
     core.saveState('workingDir', workingDir);
     core.saveState('cacheCargo', cacheCargo.toString());
+    core.saveState('cacheCargoBin', cacheCargoBin.toString());
     core.saveState('cacheTarget', cacheTarget.toString());
     core.saveState('useSccache', useSccache.toString());
     core.saveState('verbose', verbose.toString());
@@ -64,12 +67,14 @@ async function run(): Promise<void> {
     // Registry/git can be shared across Rust versions (just source code)
     const cargoRegistryTag = `${cacheTagPrefix}-cargo-registry`;
     const cargoGitTag = `${cacheTagPrefix}-cargo-git`;
+    const cargoBinTag = `${cacheTagPrefix}-cargo-bin`;
     // Target and sccache are version-specific (compiled artifacts)
     const rustMajorMinor = rustVersion.match(/^(\d+\.\d+)/)?.[1] || rustVersion;
     const targetTag = `${cacheTagPrefix}-target-rust${rustMajorMinor}`;
     const sccacheTag = `${cacheTagPrefix}-sccache-rust${rustMajorMinor}`;
 
     core.setOutput('cargo-tag', cargoRegistryTag);
+    core.setOutput('cargo-bin-tag', cargoBinTag);
     core.setOutput('target-tag', targetTag);
     core.setOutput('sccache-tag', sccacheTag);
 
@@ -118,6 +123,26 @@ async function run(): Promise<void> {
       core.saveState('cargoGitTag', cargoGitTag);
     }
 
+    // Restore cargo bin (installed cargo binaries like cargo-nextest)
+    let cargoBinRestored = false;
+    if (cacheCargoBin) {
+      const cargoBinDir = `${cargoHome}/bin`;
+
+      core.info('Restoring cargo bin from BoringCache...');
+      const binArgs = ['restore', workspace, `${cargoBinTag}:${cargoBinDir}`];
+      if (verbose) binArgs.push('--verbose');
+      const binResult = await execBoringCache(binArgs);
+      if (wasCacheHit(binResult)) {
+        core.info('✓ Cargo bin restored from BoringCache');
+        cargoBinRestored = true;
+      } else {
+        core.info('Cargo bin not in cache');
+      }
+
+      core.saveState('cargoBinRestored', cargoBinRestored.toString());
+      core.saveState('cargoBinTag', cargoBinTag);
+    }
+
     // Restore target cache
     if (cacheTarget) {
       const targetDir = path.join(workingDir, 'target');
@@ -144,10 +169,11 @@ async function run(): Promise<void> {
       // Install sccache binary
       await installSccache();
 
-      // Configure sccache environment and start server
-      await configureSccacheEnv(sccacheCacheSize);
+      // Configure sccache environment (env vars + create dir, but do NOT start server yet)
+      configureSccacheEnv(sccacheCacheSize);
 
-      // Restore sccache cache directory
+      // Restore sccache cache directory BEFORE starting the server.
+      // sccache indexes its local cache at startup, so files must be on disk first.
       const sccacheDir = getSccacheDir();
       core.info('Restoring sccache from BoringCache...');
       const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
@@ -161,6 +187,9 @@ async function run(): Promise<void> {
         core.info('sccache not in cache (first run or cache invalidated)');
       }
 
+      // Now start the server — it will index the restored cache files
+      await startSccacheServer();
+
       core.saveState('sccacheRestored', sccacheRestored.toString());
       core.saveState('sccacheTag', sccacheTag);
     }
@@ -169,7 +198,7 @@ async function run(): Promise<void> {
     await setupRustToolchain(rustVersion, { profile, targets, components });
 
     // Set cache-hit output
-    const cacheHit = registryRestored || targetRestored || sccacheRestored;
+    const cacheHit = registryRestored || cargoBinRestored || targetRestored || sccacheRestored;
     core.setOutput('cache-hit', cacheHit.toString());
     core.setOutput('sccache-hit', sccacheRestored.toString());
 

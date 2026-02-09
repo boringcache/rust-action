@@ -45310,10 +45310,12 @@ async function run() {
         const workspace = core.getInput('workspace') || core.getState('workspace');
         const workingDir = core.getInput('working-directory') || core.getState('workingDir') || process.cwd();
         const cacheCargo = core.getInput('cache-cargo') !== 'false' && core.getState('cacheCargo') !== 'false';
+        const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true' || core.getState('cacheCargoBin') === 'true';
         const cacheTarget = core.getInput('cache-target') !== 'false' && core.getState('cacheTarget') !== 'false';
         const useSccache = core.getInput('sccache') === 'true' || core.getState('useSccache') === 'true';
         const cargoRegistryTag = core.getInput('cargo-tag') || core.getState('cargoRegistryTag');
         const cargoGitTag = core.getState('cargoGitTag');
+        const cargoBinTag = core.getState('cargoBinTag');
         const targetTag = core.getInput('target-tag') || core.getState('targetTag');
         const sccacheTag = core.getState('sccacheTag');
         const verbose = core.getState('verbose') === 'true';
@@ -45349,6 +45351,16 @@ async function run() {
                     await (0, utils_1.execBoringCache)(args);
                 }
             }
+        }
+        if (cacheCargoBin && cargoBinTag) {
+            const cargoBinDir = `${cargoHome}/bin`;
+            core.info(`Saving cargo bin [${cargoBinTag}]...`);
+            const args = ['save', workspace, `${cargoBinTag}:${cargoBinDir}`];
+            if (verbose)
+                args.push('--verbose');
+            if (exclude)
+                args.push('--exclude', exclude);
+            await (0, utils_1.execBoringCache)(args);
         }
         if (cacheTarget && targetTag) {
             const targetDir = path.join(workingDir, 'target');
@@ -45436,6 +45448,7 @@ exports.pathExists = pathExists;
 exports.hasGitDependencies = hasGitDependencies;
 exports.getSccacheDir = getSccacheDir;
 exports.configureSccacheEnv = configureSccacheEnv;
+exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
 const core = __importStar(__nccwpck_require__(37484));
@@ -45590,7 +45603,7 @@ async function hasGitDependencies(lockPath) {
 function getSccacheDir() {
     return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
 }
-async function configureSccacheEnv(cacheSize) {
+function configureSccacheEnv(cacheSize) {
     const sccacheDir = getSccacheDir();
     process.env.RUSTC_WRAPPER = 'sccache';
     core.exportVariable('RUSTC_WRAPPER', 'sccache');
@@ -45599,9 +45612,11 @@ async function configureSccacheEnv(cacheSize) {
     process.env.SCCACHE_CACHE_SIZE = cacheSize;
     core.exportVariable('SCCACHE_CACHE_SIZE', cacheSize);
     fs.mkdirSync(sccacheDir, { recursive: true });
+    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
+}
+async function startSccacheServer() {
     core.info('Starting sccache server...');
     await exec.exec('sccache', ['--start-server'], { ignoreReturnCode: true });
-    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
 }
 async function installSccache() {
     const platform = os.platform();

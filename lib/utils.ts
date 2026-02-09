@@ -184,7 +184,7 @@ export function getSccacheDir(): string {
   return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
 }
 
-export async function configureSccacheEnv(cacheSize: string): Promise<void> {
+export function configureSccacheEnv(cacheSize: string): void {
   const sccacheDir = getSccacheDir();
 
   process.env.RUSTC_WRAPPER = 'sccache';
@@ -198,10 +198,12 @@ export async function configureSccacheEnv(cacheSize: string): Promise<void> {
 
   fs.mkdirSync(sccacheDir, { recursive: true });
 
+  core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
+}
+
+export async function startSccacheServer(): Promise<void> {
   core.info('Starting sccache server...');
   await exec.exec('sccache', ['--start-server'], { ignoreReturnCode: true });
-
-  core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
 }
 
 export async function installSccache(): Promise<void> {

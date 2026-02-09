@@ -46,6 +46,7 @@ exports.pathExists = pathExists;
 exports.hasGitDependencies = hasGitDependencies;
 exports.getSccacheDir = getSccacheDir;
 exports.configureSccacheEnv = configureSccacheEnv;
+exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
 const core = __importStar(require("@actions/core"));
@@ -200,7 +201,7 @@ async function hasGitDependencies(lockPath) {
 function getSccacheDir() {
     return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
 }
-async function configureSccacheEnv(cacheSize) {
+function configureSccacheEnv(cacheSize) {
     const sccacheDir = getSccacheDir();
     process.env.RUSTC_WRAPPER = 'sccache';
     core.exportVariable('RUSTC_WRAPPER', 'sccache');
@@ -209,9 +210,11 @@ async function configureSccacheEnv(cacheSize) {
     process.env.SCCACHE_CACHE_SIZE = cacheSize;
     core.exportVariable('SCCACHE_CACHE_SIZE', cacheSize);
     fs.mkdirSync(sccacheDir, { recursive: true });
+    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
+}
+async function startSccacheServer() {
     core.info('Starting sccache server...');
     await exec.exec('sccache', ['--start-server'], { ignoreReturnCode: true });
-    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
 }
 async function installSccache() {
     const platform = os.platform();

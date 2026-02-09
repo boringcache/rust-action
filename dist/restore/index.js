@@ -45313,6 +45313,7 @@ async function run() {
         const inputVersion = core.getInput('rust-version') || core.getInput('toolchain');
         const workingDir = core.getInput('working-directory') || process.cwd();
         const cacheCargo = core.getInput('cache-cargo') !== 'false';
+        const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true';
         const cacheTarget = core.getInput('cache-target') !== 'false';
         const useSccache = core.getInput('sccache') === 'true';
         const verbose = core.getInput('verbose') === 'true';
@@ -45332,6 +45333,7 @@ async function run() {
         core.saveState('rustVersion', rustVersion);
         core.saveState('workingDir', workingDir);
         core.saveState('cacheCargo', cacheCargo.toString());
+        core.saveState('cacheCargoBin', cacheCargoBin.toString());
         core.saveState('cacheTarget', cacheTarget.toString());
         core.saveState('useSccache', useSccache.toString());
         core.saveState('verbose', verbose.toString());
@@ -45346,11 +45348,13 @@ async function run() {
         // Registry/git can be shared across Rust versions (just source code)
         const cargoRegistryTag = `${cacheTagPrefix}-cargo-registry`;
         const cargoGitTag = `${cacheTagPrefix}-cargo-git`;
+        const cargoBinTag = `${cacheTagPrefix}-cargo-bin`;
         // Target and sccache are version-specific (compiled artifacts)
         const rustMajorMinor = ((_a = rustVersion.match(/^(\d+\.\d+)/)) === null || _a === void 0 ? void 0 : _a[1]) || rustVersion;
         const targetTag = `${cacheTagPrefix}-target-rust${rustMajorMinor}`;
         const sccacheTag = `${cacheTagPrefix}-sccache-rust${rustMajorMinor}`;
         core.setOutput('cargo-tag', cargoRegistryTag);
+        core.setOutput('cargo-bin-tag', cargoBinTag);
         core.setOutput('target-tag', targetTag);
         core.setOutput('sccache-tag', sccacheTag);
         // Restore caches
@@ -45398,6 +45402,25 @@ async function run() {
             core.saveState('cargoRegistryTag', cargoRegistryTag);
             core.saveState('cargoGitTag', cargoGitTag);
         }
+        // Restore cargo bin (installed cargo binaries like cargo-nextest)
+        let cargoBinRestored = false;
+        if (cacheCargoBin) {
+            const cargoBinDir = `${cargoHome}/bin`;
+            core.info('Restoring cargo bin from BoringCache...');
+            const binArgs = ['restore', workspace, `${cargoBinTag}:${cargoBinDir}`];
+            if (verbose)
+                binArgs.push('--verbose');
+            const binResult = await (0, utils_1.execBoringCache)(binArgs);
+            if ((0, utils_1.wasCacheHit)(binResult)) {
+                core.info('✓ Cargo bin restored from BoringCache');
+                cargoBinRestored = true;
+            }
+            else {
+                core.info('Cargo bin not in cache');
+            }
+            core.saveState('cargoBinRestored', cargoBinRestored.toString());
+            core.saveState('cargoBinTag', cargoBinTag);
+        }
         // Restore target cache
         if (cacheTarget) {
             const targetDir = path.join(workingDir, 'target');
@@ -45421,9 +45444,10 @@ async function run() {
         if (useSccache) {
             // Install sccache binary
             await (0, utils_1.installSccache)();
-            // Configure sccache environment and start server
-            await (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
-            // Restore sccache cache directory
+            // Configure sccache environment (env vars + create dir, but do NOT start server yet)
+            (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
+            // Restore sccache cache directory BEFORE starting the server.
+            // sccache indexes its local cache at startup, so files must be on disk first.
             const sccacheDir = (0, utils_1.getSccacheDir)();
             core.info('Restoring sccache from BoringCache...');
             const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
@@ -45437,13 +45461,15 @@ async function run() {
             else {
                 core.info('sccache not in cache (first run or cache invalidated)');
             }
+            // Now start the server — it will index the restored cache files
+            await (0, utils_1.startSccacheServer)();
             core.saveState('sccacheRestored', sccacheRestored.toString());
             core.saveState('sccacheTag', sccacheTag);
         }
         // Setup Rust toolchain using rustup (pre-installed on GitHub runners)
         await (0, utils_1.setupRustToolchain)(rustVersion, { profile, targets, components });
         // Set cache-hit output
-        const cacheHit = registryRestored || targetRestored || sccacheRestored;
+        const cacheHit = registryRestored || cargoBinRestored || targetRestored || sccacheRestored;
         core.setOutput('cache-hit', cacheHit.toString());
         core.setOutput('sccache-hit', sccacheRestored.toString());
         core.info('✓ Restore from BoringCache complete');
@@ -45511,6 +45537,7 @@ exports.pathExists = pathExists;
 exports.hasGitDependencies = hasGitDependencies;
 exports.getSccacheDir = getSccacheDir;
 exports.configureSccacheEnv = configureSccacheEnv;
+exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
 const core = __importStar(__nccwpck_require__(37484));
@@ -45665,7 +45692,7 @@ async function hasGitDependencies(lockPath) {
 function getSccacheDir() {
     return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
 }
-async function configureSccacheEnv(cacheSize) {
+function configureSccacheEnv(cacheSize) {
     const sccacheDir = getSccacheDir();
     process.env.RUSTC_WRAPPER = 'sccache';
     core.exportVariable('RUSTC_WRAPPER', 'sccache');
@@ -45674,9 +45701,11 @@ async function configureSccacheEnv(cacheSize) {
     process.env.SCCACHE_CACHE_SIZE = cacheSize;
     core.exportVariable('SCCACHE_CACHE_SIZE', cacheSize);
     fs.mkdirSync(sccacheDir, { recursive: true });
+    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
+}
+async function startSccacheServer() {
     core.info('Starting sccache server...');
     await exec.exec('sccache', ['--start-server'], { ignoreReturnCode: true });
-    core.info(`sccache configured: dir=${sccacheDir}, size=${cacheSize}`);
 }
 async function installSccache() {
     const platform = os.platform();
