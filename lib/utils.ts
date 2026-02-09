@@ -277,7 +277,7 @@ export async function installSccache(): Promise<void> {
       await exec.exec('tar', ['-xzf', archivePath, '-C', tempDir]);
     }
 
-    const binDir = `${os.homedir()}/.local/bin`;
+    const binDir = path.join(os.homedir(), '.local', 'bin');
     await fs.promises.mkdir(binDir, { recursive: true });
 
     const binaryName = platform === 'win32' ? 'sccache.exe' : 'sccache';
