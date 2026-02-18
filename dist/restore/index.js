@@ -41629,7 +41629,7 @@ async function run() {
         const components = core.getInput('components');
         const profile = core.getInput('profile') || 'minimal';
         const rustVersion = await (0, utils_1.getRustVersion)(inputVersion, workingDir);
-        const cliVersion = core.getInput('cli-version') || 'v1.0.2';
+        const cliVersion = core.getInput('cli-version') || 'v1.0.3';
         // Set outputs
         core.setOutput('workspace', workspace);
         core.setOutput('rust-version', rustVersion);
