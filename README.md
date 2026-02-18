@@ -163,7 +163,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `cli-version` | No | `v1.0.1` | BoringCache CLI version. Set to `skip` to disable installation. |
+| `cli-version` | No | `v1.0.2` | BoringCache CLI version. Set to `skip` to disable installation. |
 | `workspace` | No | repo name | Workspace in `org/repo` form. Defaults to `BORINGCACHE_DEFAULT_WORKSPACE` or repo name. |
 | `cache-tag` | No | repo name | Cache tag prefix used for cargo/target/sccache tags. |
 | `rust-version` | No | auto-detected or `stable` | Rust version/channel to install. |
