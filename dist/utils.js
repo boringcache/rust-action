@@ -49,11 +49,18 @@ exports.configureSccacheEnv = configureSccacheEnv;
 exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
+exports.findAvailablePort = findAvailablePort;
+exports.startCacheRegistryProxy = startCacheRegistryProxy;
+exports.stopCacheRegistryProxy = stopCacheRegistryProxy;
+exports.configureSccacheProxyEnv = configureSccacheProxyEnv;
 const core = __importStar(require("@actions/core"));
 const exec = __importStar(require("@actions/exec"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+const net = __importStar(require("net"));
+const http = __importStar(require("http"));
+const child_process_1 = require("child_process");
 const action_core_1 = require("@boringcache/action-core");
 Object.defineProperty(exports, "ensureBoringCache", { enumerable: true, get: function () { return action_core_1.ensureBoringCache; } });
 let lastOutput = '';
@@ -303,4 +310,102 @@ async function stopSccacheServer() {
     catch {
         core.debug('sccache server stop failed (may not have been running)');
     }
+}
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+function httpGet(url) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+            res.resume();
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 400) {
+                resolve(res.statusCode);
+            }
+            else {
+                reject(new Error(`HTTP ${res.statusCode}`));
+            }
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error('timeout'));
+        });
+    });
+}
+async function findAvailablePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(0, '127.0.0.1', () => {
+            const addr = server.address();
+            if (addr && typeof addr !== 'string') {
+                const port = addr.port;
+                server.close(() => resolve(port));
+            }
+            else {
+                server.close(() => reject(new Error('Failed to get port')));
+            }
+        });
+        server.on('error', reject);
+    });
+}
+async function startCacheRegistryProxy(workspace, port) {
+    const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
+    const fd = fs.openSync(logFile, 'w');
+    const child = (0, child_process_1.spawn)('boringcache', [
+        'cache-registry', workspace,
+        '--host', '127.0.0.1',
+        '--port', port.toString(),
+        '--no-platform',
+        '--no-git'
+    ], {
+        detached: true,
+        stdio: ['ignore', fd, fd]
+    });
+    child.unref();
+    fs.closeSync(fd);
+    if (!child.pid) {
+        throw new Error('Failed to start cache-registry proxy');
+    }
+    core.info(`Cache-registry proxy starting (pid=${child.pid}, port=${port})...`);
+    const maxWait = 30000;
+    const interval = 500;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+        try {
+            await httpGet(`http://127.0.0.1:${port}/v2/`);
+            core.info(`Cache-registry proxy ready on port ${port}`);
+            return { pid: child.pid, port };
+        }
+        catch {
+            await sleep(interval);
+        }
+    }
+    try {
+        const logs = fs.readFileSync(logFile, 'utf-8');
+        core.error(`Cache-registry proxy logs:\n${logs}`);
+    }
+    catch { }
+    throw new Error(`Cache-registry proxy failed to become ready within ${maxWait / 1000}s`);
+}
+async function stopCacheRegistryProxy(pid) {
+    try {
+        process.kill(pid, 'SIGTERM');
+        core.info(`Stopped cache-registry proxy (pid=${pid})`);
+    }
+    catch (err) {
+        if (err.code === 'ESRCH') {
+            core.info(`Cache-registry proxy (pid=${pid}) already exited`);
+        }
+        else {
+            core.warning(`Failed to stop cache-registry proxy: ${err.message}`);
+        }
+    }
+}
+function configureSccacheProxyEnv(port) {
+    const endpoint = `http://127.0.0.1:${port}/`;
+    process.env.SCCACHE_WEBDAV_ENDPOINT = endpoint;
+    core.exportVariable('SCCACHE_WEBDAV_ENDPOINT', endpoint);
+    process.env.RUSTC_WRAPPER = 'sccache';
+    core.exportVariable('RUSTC_WRAPPER', 'sccache');
+    core.info(`sccache proxy configured: endpoint=${endpoint}`);
 }

@@ -134,3 +134,66 @@ jobs:
           echo ""
           echo "=== sccache cache directory ==="
           ls -la ~/.cache/sccache/ 2>/dev/null || echo "Directory does not exist"
+
+  test-sccache-proxy:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install
+      - run: npm run build
+
+      - name: Setup Rust with sccache proxy
+        uses: ./
+        env:
+          BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+        with:
+          workspace: boringcache/actions
+          sccache: true
+          sccache-mode: proxy
+          cache-target: false
+
+      - name: Verify proxy mode
+        run: |
+          echo "SCCACHE_WEBDAV_ENDPOINT=$SCCACHE_WEBDAV_ENDPOINT"
+          echo "RUSTC_WRAPPER=$RUSTC_WRAPPER"
+          sccache --show-stats || true
+
+      - name: Build test project
+        run: |
+          cargo new --bin sccache-proxy-test
+          cd sccache-proxy-test
+          cat > Cargo.toml << 'EOF'
+          [package]
+          name = "sccache-proxy-test"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          serde = { version = "1", features = ["derive"] }
+          serde_json = "1"
+          EOF
+          cat > src/main.rs << 'EOF'
+          use serde::{Deserialize, Serialize};
+
+          #[derive(Serialize, Deserialize, Debug)]
+          struct Point { x: i32, y: i32 }
+
+          fn main() {
+              let point = Point { x: 1, y: 2 };
+              println!("JSON: {}", serde_json::to_string(&point).unwrap());
+          }
+          EOF
+          cargo build --release
+
+      - name: Show sccache stats
+        run: sccache --show-stats

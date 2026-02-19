@@ -47,13 +47,14 @@ async function run() {
         const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true';
         const cacheTarget = core.getInput('cache-target') !== 'false';
         const useSccache = core.getInput('sccache') === 'true';
+        const sccacheMode = core.getInput('sccache-mode') || 'local';
         const verbose = core.getInput('verbose') === 'true';
         const sccacheCacheSize = core.getInput('sccache-cache-size') || '5G';
         const targets = core.getInput('targets');
         const components = core.getInput('components');
         const profile = core.getInput('profile') || 'minimal';
         const rustVersion = await (0, utils_1.getRustVersion)(inputVersion, workingDir);
-        const cliVersion = core.getInput('cli-version') || 'v1.0.3';
+        const cliVersion = core.getInput('cli-version') || 'v1.1.0';
         // Set outputs
         core.setOutput('workspace', workspace);
         core.setOutput('rust-version', rustVersion);
@@ -67,6 +68,7 @@ async function run() {
         core.saveState('cacheCargoBin', cacheCargoBin.toString());
         core.saveState('cacheTarget', cacheTarget.toString());
         core.saveState('useSccache', useSccache.toString());
+        core.saveState('sccacheMode', sccacheMode);
         core.saveState('verbose', verbose.toString());
         // Setup boringcache CLI
         if (cliVersion.toLowerCase() !== 'skip') {
@@ -175,27 +177,36 @@ async function run() {
         if (useSccache) {
             // Install sccache binary
             await (0, utils_1.installSccache)();
-            // Configure sccache environment (env vars + create dir, but do NOT start server yet)
-            (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
-            // Restore sccache cache directory BEFORE starting the server.
-            // sccache indexes its local cache at startup, so files must be on disk first.
-            const sccacheDir = (0, utils_1.getSccacheDir)();
-            core.info('Restoring sccache from BoringCache...');
-            const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
-            if (verbose)
-                sccacheArgs.push('--verbose');
-            const sccacheResult = await (0, utils_1.execBoringCache)(sccacheArgs);
-            if ((0, utils_1.wasCacheHit)(sccacheResult)) {
-                core.info('✓ sccache restored from BoringCache');
-                sccacheRestored = true;
+            if (sccacheMode === 'proxy') {
+                const port = await (0, utils_1.findAvailablePort)();
+                const proxy = await (0, utils_1.startCacheRegistryProxy)(workspace, port);
+                (0, utils_1.configureSccacheProxyEnv)(proxy.port);
+                await (0, utils_1.startSccacheServer)();
+                core.saveState('proxyPid', proxy.pid.toString());
+                core.saveState('proxyPort', proxy.port.toString());
             }
             else {
-                core.info('sccache not in cache (first run or cache invalidated)');
+                (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
+                // Restore sccache cache directory BEFORE starting the server.
+                // sccache indexes its local cache at startup, so files must be on disk first.
+                const sccacheDir = (0, utils_1.getSccacheDir)();
+                core.info('Restoring sccache from BoringCache...');
+                const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
+                if (verbose)
+                    sccacheArgs.push('--verbose');
+                const sccacheResult = await (0, utils_1.execBoringCache)(sccacheArgs);
+                if ((0, utils_1.wasCacheHit)(sccacheResult)) {
+                    core.info('✓ sccache restored from BoringCache');
+                    sccacheRestored = true;
+                }
+                else {
+                    core.info('sccache not in cache (first run or cache invalidated)');
+                }
+                // Now start the server — it will index the restored cache files
+                await (0, utils_1.startSccacheServer)();
+                core.saveState('sccacheRestored', sccacheRestored.toString());
+                core.saveState('sccacheTag', sccacheTag);
             }
-            // Now start the server — it will index the restored cache files
-            await (0, utils_1.startSccacheServer)();
-            core.saveState('sccacheRestored', sccacheRestored.toString());
-            core.saveState('sccacheTag', sccacheTag);
         }
         // Setup Rust toolchain using rustup (pre-installed on GitHub runners)
         await (0, utils_1.setupRustToolchain)(rustVersion, { profile, targets, components });

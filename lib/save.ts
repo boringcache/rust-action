@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { execBoringCache, hasGitDependencies, getCargoHome, getSccacheDir, stopSccacheServer } from './utils';
+import { execBoringCache, hasGitDependencies, getCargoHome, getSccacheDir, stopSccacheServer, stopCacheRegistryProxy } from './utils';
 import * as path from 'path';
 
 async function run(): Promise<void> {
@@ -70,14 +70,24 @@ async function run(): Promise<void> {
       await execBoringCache(args);
     }
 
-    if (useSccache && sccacheTag) {
-      await stopSccacheServer();
-      const sccacheDir = getSccacheDir();
-      core.info(`Saving sccache [${sccacheTag}]...`);
-      const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
-      if (verbose) args.push('--verbose');
-      if (exclude) args.push('--exclude', exclude);
-      await execBoringCache(args);
+    if (useSccache) {
+      const sccacheMode = core.getState('sccacheMode') || 'local';
+
+      if (sccacheMode === 'proxy') {
+        await stopSccacheServer();
+        const proxyPid = core.getState('proxyPid');
+        if (proxyPid) {
+          await stopCacheRegistryProxy(parseInt(proxyPid, 10));
+        }
+      } else if (sccacheTag) {
+        await stopSccacheServer();
+        const sccacheDir = getSccacheDir();
+        core.info(`Saving sccache [${sccacheTag}]...`);
+        const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
+        if (verbose) args.push('--verbose');
+        if (exclude) args.push('--exclude', exclude);
+        await execBoringCache(args);
+      }
     }
 
     core.info('Save complete');

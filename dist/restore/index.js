@@ -41623,13 +41623,14 @@ async function run() {
         const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true';
         const cacheTarget = core.getInput('cache-target') !== 'false';
         const useSccache = core.getInput('sccache') === 'true';
+        const sccacheMode = core.getInput('sccache-mode') || 'local';
         const verbose = core.getInput('verbose') === 'true';
         const sccacheCacheSize = core.getInput('sccache-cache-size') || '5G';
         const targets = core.getInput('targets');
         const components = core.getInput('components');
         const profile = core.getInput('profile') || 'minimal';
         const rustVersion = await (0, utils_1.getRustVersion)(inputVersion, workingDir);
-        const cliVersion = core.getInput('cli-version') || 'v1.0.3';
+        const cliVersion = core.getInput('cli-version') || 'v1.1.0';
         // Set outputs
         core.setOutput('workspace', workspace);
         core.setOutput('rust-version', rustVersion);
@@ -41643,6 +41644,7 @@ async function run() {
         core.saveState('cacheCargoBin', cacheCargoBin.toString());
         core.saveState('cacheTarget', cacheTarget.toString());
         core.saveState('useSccache', useSccache.toString());
+        core.saveState('sccacheMode', sccacheMode);
         core.saveState('verbose', verbose.toString());
         // Setup boringcache CLI
         if (cliVersion.toLowerCase() !== 'skip') {
@@ -41751,27 +41753,36 @@ async function run() {
         if (useSccache) {
             // Install sccache binary
             await (0, utils_1.installSccache)();
-            // Configure sccache environment (env vars + create dir, but do NOT start server yet)
-            (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
-            // Restore sccache cache directory BEFORE starting the server.
-            // sccache indexes its local cache at startup, so files must be on disk first.
-            const sccacheDir = (0, utils_1.getSccacheDir)();
-            core.info('Restoring sccache from BoringCache...');
-            const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
-            if (verbose)
-                sccacheArgs.push('--verbose');
-            const sccacheResult = await (0, utils_1.execBoringCache)(sccacheArgs);
-            if ((0, utils_1.wasCacheHit)(sccacheResult)) {
-                core.info('✓ sccache restored from BoringCache');
-                sccacheRestored = true;
+            if (sccacheMode === 'proxy') {
+                const port = await (0, utils_1.findAvailablePort)();
+                const proxy = await (0, utils_1.startCacheRegistryProxy)(workspace, port);
+                (0, utils_1.configureSccacheProxyEnv)(proxy.port);
+                await (0, utils_1.startSccacheServer)();
+                core.saveState('proxyPid', proxy.pid.toString());
+                core.saveState('proxyPort', proxy.port.toString());
             }
             else {
-                core.info('sccache not in cache (first run or cache invalidated)');
+                (0, utils_1.configureSccacheEnv)(sccacheCacheSize);
+                // Restore sccache cache directory BEFORE starting the server.
+                // sccache indexes its local cache at startup, so files must be on disk first.
+                const sccacheDir = (0, utils_1.getSccacheDir)();
+                core.info('Restoring sccache from BoringCache...');
+                const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
+                if (verbose)
+                    sccacheArgs.push('--verbose');
+                const sccacheResult = await (0, utils_1.execBoringCache)(sccacheArgs);
+                if ((0, utils_1.wasCacheHit)(sccacheResult)) {
+                    core.info('✓ sccache restored from BoringCache');
+                    sccacheRestored = true;
+                }
+                else {
+                    core.info('sccache not in cache (first run or cache invalidated)');
+                }
+                // Now start the server — it will index the restored cache files
+                await (0, utils_1.startSccacheServer)();
+                core.saveState('sccacheRestored', sccacheRestored.toString());
+                core.saveState('sccacheTag', sccacheTag);
             }
-            // Now start the server — it will index the restored cache files
-            await (0, utils_1.startSccacheServer)();
-            core.saveState('sccacheRestored', sccacheRestored.toString());
-            core.saveState('sccacheTag', sccacheTag);
         }
         // Setup Rust toolchain using rustup (pre-installed on GitHub runners)
         await (0, utils_1.setupRustToolchain)(rustVersion, { profile, targets, components });
@@ -41847,11 +41858,18 @@ exports.configureSccacheEnv = configureSccacheEnv;
 exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
+exports.findAvailablePort = findAvailablePort;
+exports.startCacheRegistryProxy = startCacheRegistryProxy;
+exports.stopCacheRegistryProxy = stopCacheRegistryProxy;
+exports.configureSccacheProxyEnv = configureSccacheProxyEnv;
 const core = __importStar(__nccwpck_require__(7484));
 const exec = __importStar(__nccwpck_require__(5236));
 const fs = __importStar(__nccwpck_require__(9896));
 const path = __importStar(__nccwpck_require__(6928));
 const os = __importStar(__nccwpck_require__(857));
+const net = __importStar(__nccwpck_require__(9278));
+const http = __importStar(__nccwpck_require__(8611));
+const child_process_1 = __nccwpck_require__(5317);
 const action_core_1 = __nccwpck_require__(8701);
 Object.defineProperty(exports, "ensureBoringCache", ({ enumerable: true, get: function () { return action_core_1.ensureBoringCache; } }));
 let lastOutput = '';
@@ -42101,6 +42119,104 @@ async function stopSccacheServer() {
     catch {
         core.debug('sccache server stop failed (may not have been running)');
     }
+}
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+function httpGet(url) {
+    return new Promise((resolve, reject) => {
+        const req = http.get(url, (res) => {
+            res.resume();
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 400) {
+                resolve(res.statusCode);
+            }
+            else {
+                reject(new Error(`HTTP ${res.statusCode}`));
+            }
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error('timeout'));
+        });
+    });
+}
+async function findAvailablePort() {
+    return new Promise((resolve, reject) => {
+        const server = net.createServer();
+        server.listen(0, '127.0.0.1', () => {
+            const addr = server.address();
+            if (addr && typeof addr !== 'string') {
+                const port = addr.port;
+                server.close(() => resolve(port));
+            }
+            else {
+                server.close(() => reject(new Error('Failed to get port')));
+            }
+        });
+        server.on('error', reject);
+    });
+}
+async function startCacheRegistryProxy(workspace, port) {
+    const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
+    const fd = fs.openSync(logFile, 'w');
+    const child = (0, child_process_1.spawn)('boringcache', [
+        'cache-registry', workspace,
+        '--host', '127.0.0.1',
+        '--port', port.toString(),
+        '--no-platform',
+        '--no-git'
+    ], {
+        detached: true,
+        stdio: ['ignore', fd, fd]
+    });
+    child.unref();
+    fs.closeSync(fd);
+    if (!child.pid) {
+        throw new Error('Failed to start cache-registry proxy');
+    }
+    core.info(`Cache-registry proxy starting (pid=${child.pid}, port=${port})...`);
+    const maxWait = 30000;
+    const interval = 500;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+        try {
+            await httpGet(`http://127.0.0.1:${port}/v2/`);
+            core.info(`Cache-registry proxy ready on port ${port}`);
+            return { pid: child.pid, port };
+        }
+        catch {
+            await sleep(interval);
+        }
+    }
+    try {
+        const logs = fs.readFileSync(logFile, 'utf-8');
+        core.error(`Cache-registry proxy logs:\n${logs}`);
+    }
+    catch { }
+    throw new Error(`Cache-registry proxy failed to become ready within ${maxWait / 1000}s`);
+}
+async function stopCacheRegistryProxy(pid) {
+    try {
+        process.kill(pid, 'SIGTERM');
+        core.info(`Stopped cache-registry proxy (pid=${pid})`);
+    }
+    catch (err) {
+        if (err.code === 'ESRCH') {
+            core.info(`Cache-registry proxy (pid=${pid}) already exited`);
+        }
+        else {
+            core.warning(`Failed to stop cache-registry proxy: ${err.message}`);
+        }
+    }
+}
+function configureSccacheProxyEnv(port) {
+    const endpoint = `http://127.0.0.1:${port}/`;
+    process.env.SCCACHE_WEBDAV_ENDPOINT = endpoint;
+    core.exportVariable('SCCACHE_WEBDAV_ENDPOINT', endpoint);
+    process.env.RUSTC_WRAPPER = 'sccache';
+    core.exportVariable('RUSTC_WRAPPER', 'sccache');
+    core.info(`sccache proxy configured: endpoint=${endpoint}`);
 }
 
 

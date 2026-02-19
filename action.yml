@@ -10,7 +10,7 @@ inputs:
   cli-version:
     description: 'BoringCache CLI version (e.g., v1.0.0). Set to "skip" to disable automatic CLI setup.'
     required: false
-    default: 'v1.0.3'
+    default: 'v1.1.0'
   workspace:
     description: 'BoringCache workspace (e.g., "my-workspace" or "org/workspace")'
     required: false
@@ -58,6 +58,10 @@ inputs:
     description: 'Maximum sccache cache size (e.g., "5G", "10G"). Recommended to set this to avoid unbounded growth.'
     required: false
     default: '5G'
+  sccache-mode:
+    description: 'How sccache results are stored. "local" saves/restores the directory as an archive. "proxy" runs a cache-registry proxy for per-object CAS dedup.'
+    required: false
+    default: 'local'
   verbose:
     description: 'Enable verbose CLI output for debugging'
     required: false

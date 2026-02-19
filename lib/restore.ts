@@ -14,7 +14,10 @@ import {
   installSccache,
   configureSccacheEnv,
   startSccacheServer,
-  getSccacheDir
+  getSccacheDir,
+  findAvailablePort,
+  startCacheRegistryProxy,
+  configureSccacheProxyEnv
 } from './utils';
 import * as path from 'path';
 
@@ -28,6 +31,7 @@ async function run(): Promise<void> {
     const cacheCargoBin = core.getInput('cache-cargo-bin') === 'true';
     const cacheTarget = core.getInput('cache-target') !== 'false';
     const useSccache = core.getInput('sccache') === 'true';
+    const sccacheMode = core.getInput('sccache-mode') || 'local';
     const verbose = core.getInput('verbose') === 'true';
     const sccacheCacheSize = core.getInput('sccache-cache-size') || '5G';
     const targets = core.getInput('targets');
@@ -35,7 +39,7 @@ async function run(): Promise<void> {
     const profile = core.getInput('profile') || 'minimal';
 
     const rustVersion = await getRustVersion(inputVersion, workingDir);
-    const cliVersion = core.getInput('cli-version') || 'v1.0.3';
+    const cliVersion = core.getInput('cli-version') || 'v1.1.0';
 
     // Set outputs
     core.setOutput('workspace', workspace);
@@ -51,6 +55,7 @@ async function run(): Promise<void> {
     core.saveState('cacheCargoBin', cacheCargoBin.toString());
     core.saveState('cacheTarget', cacheTarget.toString());
     core.saveState('useSccache', useSccache.toString());
+    core.saveState('sccacheMode', sccacheMode);
     core.saveState('verbose', verbose.toString());
 
     // Setup boringcache CLI
@@ -169,29 +174,38 @@ async function run(): Promise<void> {
       // Install sccache binary
       await installSccache();
 
-      // Configure sccache environment (env vars + create dir, but do NOT start server yet)
-      configureSccacheEnv(sccacheCacheSize);
+      if (sccacheMode === 'proxy') {
+        const port = await findAvailablePort();
+        const proxy = await startCacheRegistryProxy(workspace, port);
+        configureSccacheProxyEnv(proxy.port);
+        await startSccacheServer();
 
-      // Restore sccache cache directory BEFORE starting the server.
-      // sccache indexes its local cache at startup, so files must be on disk first.
-      const sccacheDir = getSccacheDir();
-      core.info('Restoring sccache from BoringCache...');
-      const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
-      if (verbose) sccacheArgs.push('--verbose');
-      const sccacheResult = await execBoringCache(sccacheArgs);
-
-      if (wasCacheHit(sccacheResult)) {
-        core.info('✓ sccache restored from BoringCache');
-        sccacheRestored = true;
+        core.saveState('proxyPid', proxy.pid.toString());
+        core.saveState('proxyPort', proxy.port.toString());
       } else {
-        core.info('sccache not in cache (first run or cache invalidated)');
+        configureSccacheEnv(sccacheCacheSize);
+
+        // Restore sccache cache directory BEFORE starting the server.
+        // sccache indexes its local cache at startup, so files must be on disk first.
+        const sccacheDir = getSccacheDir();
+        core.info('Restoring sccache from BoringCache...');
+        const sccacheArgs = ['restore', workspace, `${sccacheTag}:${sccacheDir}`];
+        if (verbose) sccacheArgs.push('--verbose');
+        const sccacheResult = await execBoringCache(sccacheArgs);
+
+        if (wasCacheHit(sccacheResult)) {
+          core.info('✓ sccache restored from BoringCache');
+          sccacheRestored = true;
+        } else {
+          core.info('sccache not in cache (first run or cache invalidated)');
+        }
+
+        // Now start the server — it will index the restored cache files
+        await startSccacheServer();
+
+        core.saveState('sccacheRestored', sccacheRestored.toString());
+        core.saveState('sccacheTag', sccacheTag);
       }
-
-      // Now start the server — it will index the restored cache files
-      await startSccacheServer();
-
-      core.saveState('sccacheRestored', sccacheRestored.toString());
-      core.saveState('sccacheTag', sccacheTag);
     }
 
     // Setup Rust toolchain using rustup (pre-installed on GitHub runners)

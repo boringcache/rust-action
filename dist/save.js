@@ -103,16 +103,26 @@ async function run() {
                 args.push('--exclude', exclude);
             await (0, utils_1.execBoringCache)(args);
         }
-        if (useSccache && sccacheTag) {
-            await (0, utils_1.stopSccacheServer)();
-            const sccacheDir = (0, utils_1.getSccacheDir)();
-            core.info(`Saving sccache [${sccacheTag}]...`);
-            const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
-            if (verbose)
-                args.push('--verbose');
-            if (exclude)
-                args.push('--exclude', exclude);
-            await (0, utils_1.execBoringCache)(args);
+        if (useSccache) {
+            const sccacheMode = core.getState('sccacheMode') || 'local';
+            if (sccacheMode === 'proxy') {
+                await (0, utils_1.stopSccacheServer)();
+                const proxyPid = core.getState('proxyPid');
+                if (proxyPid) {
+                    await (0, utils_1.stopCacheRegistryProxy)(parseInt(proxyPid, 10));
+                }
+            }
+            else if (sccacheTag) {
+                await (0, utils_1.stopSccacheServer)();
+                const sccacheDir = (0, utils_1.getSccacheDir)();
+                core.info(`Saving sccache [${sccacheTag}]...`);
+                const args = ['save', workspace, `${sccacheTag}:${sccacheDir}`];
+                if (verbose)
+                    args.push('--verbose');
+                if (exclude)
+                    args.push('--exclude', exclude);
+                await (0, utils_1.execBoringCache)(args);
+            }
         }
         core.info('Save complete');
     }
