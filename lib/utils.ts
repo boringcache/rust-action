@@ -3,12 +3,23 @@ import * as exec from '@actions/exec';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as net from 'net';
-import * as http from 'http';
-import { spawn } from 'child_process';
-import { ensureBoringCache, execBoringCache as execBoringCacheCore } from '@boringcache/action-core';
+import {
+  ensureBoringCache,
+  execBoringCache as execBoringCacheCore,
+  getWorkspace as getWorkspaceCore,
+  getCacheTagPrefix as getCacheTagPrefixCore,
+  pathExists,
+  startRegistryProxy,
+  waitForProxy,
+  stopRegistryProxy,
+  findAvailablePort,
+} from '@boringcache/action-core';
 
-export { ensureBoringCache };
+export {
+  ensureBoringCache,
+  pathExists,
+  findAvailablePort,
+};
 
 let lastOutput = '';
 
@@ -50,7 +61,7 @@ export function wasCacheHit(exitCode: number): boolean {
 }
 
 export function getCargoHome(): string {
-  return process.env.CARGO_HOME || `${os.homedir()}/.cargo`;
+  return process.env.CARGO_HOME || path.join(os.homedir(), '.cargo');
 }
 
 export function configureCargoEnv(): void {
@@ -58,7 +69,7 @@ export function configureCargoEnv(): void {
 
   process.env.CARGO_HOME = cargoHome;
   core.exportVariable('CARGO_HOME', cargoHome);
-  core.addPath(`${cargoHome}/bin`);
+  core.addPath(path.join(cargoHome, 'bin'));
   core.exportVariable('CARGO_INCREMENTAL', '0');
   core.exportVariable('CARGO_TERM_COLOR', 'always');
 }
@@ -102,32 +113,11 @@ export async function setupRustToolchain(version: string, options: RustToolchain
 }
 
 export function getWorkspace(inputWorkspace: string): string {
-  let workspace = inputWorkspace || process.env.BORINGCACHE_DEFAULT_WORKSPACE || '';
-
-  if (!workspace) {
-    core.setFailed('Workspace is required. Set workspace input or BORINGCACHE_DEFAULT_WORKSPACE env var.');
-    throw new Error('Workspace required');
-  }
-
-  if (!workspace.includes('/')) {
-    workspace = `default/${workspace}`;
-  }
-
-  return workspace;
+  return getWorkspaceCore(inputWorkspace);
 }
 
 export function getCacheTagPrefix(inputCacheTag: string): string {
-  if (inputCacheTag) {
-    return inputCacheTag;
-  }
-
-  const repo = process.env.GITHUB_REPOSITORY || '';
-  if (repo) {
-    const repoName = repo.split('/')[1] || repo;
-    return repoName;
-  }
-
-  return 'rust';
+  return getCacheTagPrefixCore(inputCacheTag, 'rust');
 }
 
 export async function getRustVersion(inputVersion: string, workingDir: string): Promise<string> {
@@ -165,15 +155,6 @@ export async function getRustVersion(inputVersion: string, workingDir: string): 
   return 'stable';
 }
 
-export async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fs.promises.access(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function hasGitDependencies(lockPath: string): Promise<boolean> {
   try {
     const content = await fs.promises.readFile(lockPath, 'utf-8');
@@ -184,7 +165,7 @@ export async function hasGitDependencies(lockPath: string): Promise<boolean> {
 }
 
 export function getSccacheDir(): string {
-  return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
+  return process.env.SCCACHE_DIR || path.join(os.homedir(), '.cache', 'sccache');
 }
 
 export function configureSccacheEnv(cacheSize: string): void {
@@ -311,103 +292,22 @@ export async function stopSccacheServer(): Promise<void> {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function httpGet(url: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const req = http.get(url, (res) => {
-      res.resume();
-      if (res.statusCode && res.statusCode >= 200 && res.statusCode < 400) {
-        resolve(res.statusCode);
-      } else {
-        reject(new Error(`HTTP ${res.statusCode}`));
-      }
-    });
-    req.on('error', reject);
-    req.setTimeout(2000, () => {
-      req.destroy();
-      reject(new Error('timeout'));
-    });
+export async function startCacheRegistryProxy(workspace: string, port: number, tag: string): Promise<{ pid: number; port: number }> {
+  const proxy = await startRegistryProxy({
+    command: 'cache-registry',
+    workspace,
+    tag,
+    host: '127.0.0.1',
+    port,
+    noPlatform: true,
+    noGit: true,
   });
-}
-
-export async function findAvailablePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (addr && typeof addr !== 'string') {
-        const port = addr.port;
-        server.close(() => resolve(port));
-      } else {
-        server.close(() => reject(new Error('Failed to get port')));
-      }
-    });
-    server.on('error', reject);
-  });
-}
-
-export async function startCacheRegistryProxy(workspace: string, port: number, tag?: string): Promise<{ pid: number; port: number }> {
-  const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
-  const fd = fs.openSync(logFile, 'w');
-
-  const args = [
-    'cache-registry', workspace,
-  ];
-  if (tag) {
-    args.push(tag);
-  }
-  args.push('--host', '127.0.0.1', '--port', port.toString(), '--no-platform', '--no-git');
-
-  const child = spawn('boringcache', args, {
-    detached: true,
-    stdio: ['ignore', fd, fd]
-  });
-
-  child.unref();
-  fs.closeSync(fd);
-
-  if (!child.pid) {
-    throw new Error('Failed to start cache-registry proxy');
-  }
-
-  core.info(`Cache-registry proxy starting (pid=${child.pid}, port=${port})...`);
-
-  const maxWait = 30_000;
-  const interval = 500;
-  const start = Date.now();
-
-  while (Date.now() - start < maxWait) {
-    try {
-      await httpGet(`http://127.0.0.1:${port}/v2/`);
-      core.info(`Cache-registry proxy ready on port ${port}`);
-      return { pid: child.pid, port };
-    } catch {
-      await sleep(interval);
-    }
-  }
-
-  try {
-    const logs = fs.readFileSync(logFile, 'utf-8');
-    core.error(`Cache-registry proxy logs:\n${logs}`);
-  } catch {}
-
-  throw new Error(`Cache-registry proxy failed to become ready within ${maxWait / 1000}s`);
+  await waitForProxy(proxy.port, 30000, proxy.pid);
+  return proxy;
 }
 
 export async function stopCacheRegistryProxy(pid: number): Promise<void> {
-  try {
-    process.kill(pid, 'SIGTERM');
-    core.info(`Stopped cache-registry proxy (pid=${pid})`);
-  } catch (err: any) {
-    if (err.code === 'ESRCH') {
-      core.info(`Cache-registry proxy (pid=${pid}) already exited`);
-    } else {
-      core.warning(`Failed to stop cache-registry proxy: ${err.message}`);
-    }
-  }
+  await stopRegistryProxy(pid);
 }
 
 export function configureSccacheProxyEnv(port: number): void {

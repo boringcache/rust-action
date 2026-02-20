@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ensureBoringCache = void 0;
+exports.findAvailablePort = exports.pathExists = exports.ensureBoringCache = void 0;
 exports.execBoringCache = execBoringCache;
 exports.wasCacheHit = wasCacheHit;
 exports.getCargoHome = getCargoHome;
@@ -42,14 +42,12 @@ exports.setupRustToolchain = setupRustToolchain;
 exports.getWorkspace = getWorkspace;
 exports.getCacheTagPrefix = getCacheTagPrefix;
 exports.getRustVersion = getRustVersion;
-exports.pathExists = pathExists;
 exports.hasGitDependencies = hasGitDependencies;
 exports.getSccacheDir = getSccacheDir;
 exports.configureSccacheEnv = configureSccacheEnv;
 exports.startSccacheServer = startSccacheServer;
 exports.installSccache = installSccache;
 exports.stopSccacheServer = stopSccacheServer;
-exports.findAvailablePort = findAvailablePort;
 exports.startCacheRegistryProxy = startCacheRegistryProxy;
 exports.stopCacheRegistryProxy = stopCacheRegistryProxy;
 exports.configureSccacheProxyEnv = configureSccacheProxyEnv;
@@ -58,11 +56,10 @@ const exec = __importStar(require("@actions/exec"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
-const net = __importStar(require("net"));
-const http = __importStar(require("http"));
-const child_process_1 = require("child_process");
 const action_core_1 = require("@boringcache/action-core");
 Object.defineProperty(exports, "ensureBoringCache", { enumerable: true, get: function () { return action_core_1.ensureBoringCache; } });
+Object.defineProperty(exports, "pathExists", { enumerable: true, get: function () { return action_core_1.pathExists; } });
+Object.defineProperty(exports, "findAvailablePort", { enumerable: true, get: function () { return action_core_1.findAvailablePort; } });
 let lastOutput = '';
 async function execBoringCache(args) {
     lastOutput = '';
@@ -96,13 +93,13 @@ function wasCacheHit(exitCode) {
     return !missPatterns.some(pattern => pattern.test(lastOutput));
 }
 function getCargoHome() {
-    return process.env.CARGO_HOME || `${os.homedir()}/.cargo`;
+    return process.env.CARGO_HOME || path.join(os.homedir(), '.cargo');
 }
 function configureCargoEnv() {
     const cargoHome = getCargoHome();
     process.env.CARGO_HOME = cargoHome;
     core.exportVariable('CARGO_HOME', cargoHome);
-    core.addPath(`${cargoHome}/bin`);
+    core.addPath(path.join(cargoHome, 'bin'));
     core.exportVariable('CARGO_INCREMENTAL', '0');
     core.exportVariable('CARGO_TERM_COLOR', 'always');
 }
@@ -133,26 +130,10 @@ async function setupRustToolchain(version, options = {}) {
     await exec.exec('rustc', ['--version']);
 }
 function getWorkspace(inputWorkspace) {
-    let workspace = inputWorkspace || process.env.BORINGCACHE_DEFAULT_WORKSPACE || '';
-    if (!workspace) {
-        core.setFailed('Workspace is required. Set workspace input or BORINGCACHE_DEFAULT_WORKSPACE env var.');
-        throw new Error('Workspace required');
-    }
-    if (!workspace.includes('/')) {
-        workspace = `default/${workspace}`;
-    }
-    return workspace;
+    return (0, action_core_1.getWorkspace)(inputWorkspace);
 }
 function getCacheTagPrefix(inputCacheTag) {
-    if (inputCacheTag) {
-        return inputCacheTag;
-    }
-    const repo = process.env.GITHUB_REPOSITORY || '';
-    if (repo) {
-        const repoName = repo.split('/')[1] || repo;
-        return repoName;
-    }
-    return 'rust';
+    return (0, action_core_1.getCacheTagPrefix)(inputCacheTag, 'rust');
 }
 async function getRustVersion(inputVersion, workingDir) {
     if (inputVersion) {
@@ -187,15 +168,6 @@ async function getRustVersion(inputVersion, workingDir) {
     }
     return 'stable';
 }
-async function pathExists(p) {
-    try {
-        await fs.promises.access(p);
-        return true;
-    }
-    catch {
-        return false;
-    }
-}
 async function hasGitDependencies(lockPath) {
     try {
         const content = await fs.promises.readFile(lockPath, 'utf-8');
@@ -206,7 +178,7 @@ async function hasGitDependencies(lockPath) {
     }
 }
 function getSccacheDir() {
-    return process.env.SCCACHE_DIR || `${os.homedir()}/.cache/sccache`;
+    return process.env.SCCACHE_DIR || path.join(os.homedir(), '.cache', 'sccache');
 }
 function configureSccacheEnv(cacheSize) {
     const sccacheDir = getSccacheDir();
@@ -311,96 +283,21 @@ async function stopSccacheServer() {
         core.debug('sccache server stop failed (may not have been running)');
     }
 }
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-function httpGet(url) {
-    return new Promise((resolve, reject) => {
-        const req = http.get(url, (res) => {
-            res.resume();
-            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 400) {
-                resolve(res.statusCode);
-            }
-            else {
-                reject(new Error(`HTTP ${res.statusCode}`));
-            }
-        });
-        req.on('error', reject);
-        req.setTimeout(2000, () => {
-            req.destroy();
-            reject(new Error('timeout'));
-        });
-    });
-}
-async function findAvailablePort() {
-    return new Promise((resolve, reject) => {
-        const server = net.createServer();
-        server.listen(0, '127.0.0.1', () => {
-            const addr = server.address();
-            if (addr && typeof addr !== 'string') {
-                const port = addr.port;
-                server.close(() => resolve(port));
-            }
-            else {
-                server.close(() => reject(new Error('Failed to get port')));
-            }
-        });
-        server.on('error', reject);
-    });
-}
 async function startCacheRegistryProxy(workspace, port, tag) {
-    const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
-    const fd = fs.openSync(logFile, 'w');
-    const args = [
-        'cache-registry', workspace,
-    ];
-    if (tag) {
-        args.push(tag);
-    }
-    args.push('--host', '127.0.0.1', '--port', port.toString(), '--no-platform', '--no-git');
-    const child = (0, child_process_1.spawn)('boringcache', args, {
-        detached: true,
-        stdio: ['ignore', fd, fd]
+    const proxy = await (0, action_core_1.startRegistryProxy)({
+        command: 'cache-registry',
+        workspace,
+        tag,
+        host: '127.0.0.1',
+        port,
+        noPlatform: true,
+        noGit: true,
     });
-    child.unref();
-    fs.closeSync(fd);
-    if (!child.pid) {
-        throw new Error('Failed to start cache-registry proxy');
-    }
-    core.info(`Cache-registry proxy starting (pid=${child.pid}, port=${port})...`);
-    const maxWait = 30000;
-    const interval = 500;
-    const start = Date.now();
-    while (Date.now() - start < maxWait) {
-        try {
-            await httpGet(`http://127.0.0.1:${port}/v2/`);
-            core.info(`Cache-registry proxy ready on port ${port}`);
-            return { pid: child.pid, port };
-        }
-        catch {
-            await sleep(interval);
-        }
-    }
-    try {
-        const logs = fs.readFileSync(logFile, 'utf-8');
-        core.error(`Cache-registry proxy logs:\n${logs}`);
-    }
-    catch { }
-    throw new Error(`Cache-registry proxy failed to become ready within ${maxWait / 1000}s`);
+    await (0, action_core_1.waitForProxy)(proxy.port, 30000, proxy.pid);
+    return proxy;
 }
 async function stopCacheRegistryProxy(pid) {
-    try {
-        process.kill(pid, 'SIGTERM');
-        core.info(`Stopped cache-registry proxy (pid=${pid})`);
-    }
-    catch (err) {
-        if (err.code === 'ESRCH') {
-            core.info(`Cache-registry proxy (pid=${pid}) already exited`);
-        }
-        else {
-            core.warning(`Failed to stop cache-registry proxy: ${err.message}`);
-        }
-    }
+    await (0, action_core_1.stopRegistryProxy)(pid);
 }
 function configureSccacheProxyEnv(port) {
     const endpoint = `http://127.0.0.1:${port}/`;

@@ -39,7 +39,7 @@ async function run(): Promise<void> {
     const profile = core.getInput('profile') || 'minimal';
 
     const rustVersion = await getRustVersion(inputVersion, workingDir);
-    const cliVersion = core.getInput('cli-version') || 'v1.1.1';
+    const cliVersion = core.getInput('cli-version') || 'v1.2.0';
 
     // Set outputs
     core.setOutput('workspace', workspace);
