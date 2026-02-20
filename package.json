@@ -1,6 +1,6 @@
 {
   "name": "boringcache-rust",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Setup Rust with rustup and cache via BoringCache.",
   "main": "dist/restore/index.js",
   "scripts": {
