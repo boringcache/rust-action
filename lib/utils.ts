@@ -349,17 +349,19 @@ export async function findAvailablePort(): Promise<number> {
   });
 }
 
-export async function startCacheRegistryProxy(workspace: string, port: number): Promise<{ pid: number; port: number }> {
+export async function startCacheRegistryProxy(workspace: string, port: number, tag?: string): Promise<{ pid: number; port: number }> {
   const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
   const fd = fs.openSync(logFile, 'w');
 
-  const child = spawn('boringcache', [
+  const args = [
     'cache-registry', workspace,
-    '--host', '127.0.0.1',
-    '--port', port.toString(),
-    '--no-platform',
-    '--no-git'
-  ], {
+  ];
+  if (tag) {
+    args.push(tag);
+  }
+  args.push('--host', '127.0.0.1', '--port', port.toString(), '--no-platform', '--no-git');
+
+  const child = spawn('boringcache', args, {
     detached: true,
     stdio: ['ignore', fd, fd]
   });

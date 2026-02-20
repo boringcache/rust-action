@@ -176,7 +176,7 @@ async function run(): Promise<void> {
 
       if (sccacheMode === 'proxy') {
         const port = await findAvailablePort();
-        const proxy = await startCacheRegistryProxy(workspace, port);
+        const proxy = await startCacheRegistryProxy(workspace, port, cacheTagPrefix);
         configureSccacheProxyEnv(proxy.port);
         await startSccacheServer();
 

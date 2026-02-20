@@ -179,7 +179,7 @@ async function run() {
             await (0, utils_1.installSccache)();
             if (sccacheMode === 'proxy') {
                 const port = await (0, utils_1.findAvailablePort)();
-                const proxy = await (0, utils_1.startCacheRegistryProxy)(workspace, port);
+                const proxy = await (0, utils_1.startCacheRegistryProxy)(workspace, port, cacheTagPrefix);
                 (0, utils_1.configureSccacheProxyEnv)(proxy.port);
                 await (0, utils_1.startSccacheServer)();
                 core.saveState('proxyPid', proxy.pid.toString());

@@ -42067,16 +42067,17 @@ async function findAvailablePort() {
         server.on('error', reject);
     });
 }
-async function startCacheRegistryProxy(workspace, port) {
+async function startCacheRegistryProxy(workspace, port, tag) {
     const logFile = path.join(os.tmpdir(), `boringcache-proxy-${port}.log`);
     const fd = fs.openSync(logFile, 'w');
-    const child = (0, child_process_1.spawn)('boringcache', [
+    const args = [
         'cache-registry', workspace,
-        '--host', '127.0.0.1',
-        '--port', port.toString(),
-        '--no-platform',
-        '--no-git'
-    ], {
+    ];
+    if (tag) {
+        args.push(tag);
+    }
+    args.push('--host', '127.0.0.1', '--port', port.toString(), '--no-platform', '--no-git');
+    const child = (0, child_process_1.spawn)('boringcache', args, {
         detached: true,
         stdio: ['ignore', fd, fd]
     });
