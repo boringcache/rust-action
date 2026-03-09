@@ -302,7 +302,7 @@ export async function startCacheRegistryProxy(workspace: string, port: number, t
     noPlatform: true,
     noGit: true,
   });
-  await waitForProxy(proxy.port, 30000, proxy.pid);
+  await waitForProxy(proxy.port, undefined, proxy.pid);
   return proxy;
 }
 

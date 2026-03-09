@@ -42710,7 +42710,7 @@ async function startCacheRegistryProxy(workspace, port, tag) {
         noPlatform: true,
         noGit: true,
     });
-    await (0, action_core_1.waitForProxy)(proxy.port, 30000, proxy.pid);
+    await (0, action_core_1.waitForProxy)(proxy.port, undefined, proxy.pid);
     return proxy;
 }
 async function stopCacheRegistryProxy(pid) {
