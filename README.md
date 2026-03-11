@@ -1,8 +1,6 @@
 # boringcache/rust-action
 
-Setup Rust and cache Cargo registry, `target`, and sccache artifacts with BoringCache.
-
-Installs Rust via rustup, restores cached directories before your job runs, and saves them when it finishes. Caches are content-addressed — identical content is never re-uploaded.
+Set up Rust via rustup and cache Cargo plus build outputs with BoringCache.
 
 ## Quick start
 
@@ -11,219 +9,45 @@ Installs Rust via rustup, restores cached directories before your job runs, and 
   with:
     workspace: my-org/my-project
   env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-
-- run: cargo build
-- run: cargo test
-```
-
-## Recommended auth model
-
-For new workflows, provide a restore token to every job and only provide a save token to trusted branch/tag jobs:
-
-```yaml
-env:
-  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-  BORINGCACHE_SAVE_TOKEN: ${{ github.event_name == 'pull_request' && '' || secrets.BORINGCACHE_SAVE_TOKEN }}
-```
-
-Archive-backed caches restore normally on pull requests and the action skips save when no save-capable token is configured. In sccache proxy mode, the proxy also downgrades to read-only automatically.
-
-## Mental model
-
-This action caches the Rust directories you explicitly choose.
-
-- Cargo registry and git dependencies are restored before your build.
-- The `target` directory is restored to speed incremental compilation.
-- Optional sccache support adds compiler-level caching.
-
-This action does not infer what should be cached and does not modify your build commands.
-
-Version detection order:
-- `rust-toolchain.toml` (channel field)
-- `rust-toolchain`
-- `.tool-versions` (asdf/mise format)
-
-If no version file is found, defaults to `stable`.
-
-Cache tags:
-- Cargo registry: `{cache-tag}-cargo-registry`
-- Cargo git: `{cache-tag}-cargo-git`
-- Target: `{cache-tag}-target-rust{major.minor}`
-- sccache: `{cache-tag}-sccache-rust{major.minor}`
-
-What gets cached:
-- `~/.cargo/registry`
-- `~/.cargo/git`
-- `./target`
-- `~/.cache/sccache` (or `$SCCACHE_DIR`)
-
-## Common patterns
-
-### Simple Rust CI cache
-
-```yaml
-- uses: boringcache/rust-action@v1
-  with:
-    workspace: my-org/my-project
-  env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+    BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ github.event_name == 'pull_request' && '' || secrets.BORINGCACHE_SAVE_TOKEN }}
 
 - run: cargo build --release
 ```
 
-### Advanced pattern: Enable sccache
+## What it caches
 
-```yaml
-- uses: boringcache/rust-action@v1
-  with:
-    workspace: my-org/my-project
-    sccache: 'true'
-    sccache-cache-size: 10G
-  env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-```
+- Rust toolchain from `rust-toolchain.toml`, `rust-toolchain`, or `.tool-versions`.
+- Cargo registry and git dependencies.
+- `target/`.
+- Optional `~/.cargo/bin`.
+- Optional sccache, either as an archive or through a local proxy.
 
-### With a specific Rust version
+## Key inputs
 
-```yaml
-- uses: boringcache/rust-action@v1
-  env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-  with:
-    workspace: my-org/my-project
-    rust-version: '1.75'
-```
+| Input | Description |
+|-------|-------------|
+| `workspace` | Workspace in `org/repo` form. |
+| `rust-version` / `toolchain` | Override the detected Rust version or channel. |
+| `targets`, `components`, `profile` | Extra rustup setup. |
+| `cache-target` | Cache the `target/` directory. |
+| `cache-cargo-bin` | Cache installed Cargo binaries. |
+| `sccache` | Enable sccache. |
+| `sccache-mode` | `local` archive mode or `proxy` CAS-backed mode. |
+| `save-always` | Save even if the job fails. |
 
-### With nightly Rust
-
-```yaml
-- uses: boringcache/rust-action@v1
-  env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-  with:
-    workspace: my-org/my-project
-    rust-version: nightly
-```
-
-### Without target caching
-
-```yaml
-- uses: boringcache/rust-action@v1
-  env:
-    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-  with:
-    workspace: my-org/my-project
-    cache-target: 'false'
-```
-
-### Advanced pattern: Separate restore/save steps
-
-```yaml
-- uses: boringcache/rust-action/restore@v1
-  id: cache
-  with:
-    workspace: my-org/my-project
-    rust-version: stable
-
-- run: cargo build --release
-
-- uses: boringcache/rust-action/save@v1
-  with:
-    workspace: my-org/my-project
-    cargo-tag: ${{ steps.cache.outputs.cargo-tag }}
-    target-tag: ${{ steps.cache.outputs.target-tag }}
-    sccache-tag: ${{ steps.cache.outputs.sccache-tag }}
-```
-
-### Example GitHub workflow (with caching)
-
-```yaml
-name: Rust Build (BoringCache)
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    env:
-      BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Rust + caches via BoringCache
-        uses: boringcache/rust-action@v1
-        with:
-          workspace: my-org/my-project
-          rust-version: stable
-          working-directory: .
-
-      - name: Build
-        run: cargo build --release
-```
-
-## Inputs
-
-| Input | Required | Default | Description |
-|-------|----------|---------|-------------|
-| `cli-version` | No | `v1.12.1` | BoringCache CLI version. Set to `skip` to disable installation. |
-| `workspace` | No | repo name | Workspace in `org/repo` form. Defaults to `BORINGCACHE_DEFAULT_WORKSPACE` or repo name. |
-| `cache-tag` | No | repo name | Cache tag prefix used for cargo/target/sccache tags. |
-| `rust-version` | No | auto-detected or `stable` | Rust version/channel to install. |
-| `toolchain` | No | - | Alias for `rust-version` (dtolnay/rust-toolchain compatibility). |
-| `targets` | No | - | Comma-separated target triples to install. |
-| `components` | No | - | Comma-separated Rust components (e.g., `clippy,rustfmt`). |
-| `profile` | No | `minimal` | Rustup profile: `minimal`, `default`, or `complete`. |
-| `working-directory` | No | `.` | Project working directory. |
-| `cache-cargo` | No | `true` | Cache cargo registry and git dependencies. |
-| `cache-target` | No | `true` | Cache the `target` directory. |
-| `sccache` | No | `false` | Enable sccache for compilation caching. |
-| `sccache-cache-size` | No | `5G` | Maximum sccache cache size. |
-| `exclude` | No | - | Glob pattern to exclude from cache digest (e.g., `*.out`). |
-| `save-always` | No | `false` | Save cache even if the job fails. |
+When `sccache-mode: proxy` is enabled, the proxy auto-downgrades to read-only when only a restore token is present.
 
 ## Outputs
 
 | Output | Description |
 |--------|-------------|
-| `workspace` | Resolved workspace name |
-| `rust-version` | Installed Rust version |
-| `cache-tag` | Cache tag prefix used |
-| `cargo-tag` | Cache tag for cargo registry |
-| `target-tag` | Cache tag for target directory |
-| `sccache-tag` | Cache tag for sccache directory |
-| `cache-hit` | Whether any cache was restored |
-| `sccache-hit` | Whether sccache cache was restored |
+| `rust-version` | Installed Rust version. |
+| `cache-hit` | Whether any cache was restored. |
+| `sccache-hit` | Whether sccache cache was restored. |
+| `workspace` | Resolved workspace name. |
 
-## Platform behavior
+## Docs
 
-Platform scoping is what makes it safe to reuse caches across machines.
-
-Cargo registries are platform-agnostic, but `target` artifacts are platform-specific. This action keeps platform scoping enabled by default.
-
-## Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `BORINGCACHE_RESTORE_TOKEN` | Restore-capable token for pull requests and other read-only jobs |
-| `BORINGCACHE_SAVE_TOKEN` | Save-capable token for trusted jobs that should publish cache updates |
-| `BORINGCACHE_DEFAULT_WORKSPACE` | Default workspace if not specified in inputs |
-| `BORINGCACHE_INSTALLER_URL` | Override URL for the BoringCache installer script |
-| `BORINGCACHE_INSTALLER_SHA256` | Expected SHA256 of the installer script (recommended for integrity) |
-
-## Troubleshooting
-
-- Cache miss on first run is expected.
-- Cargo git cache is skipped when your `Cargo.lock` has no git dependencies.
-- sccache caches only when compilation happens and the server is running.
-
-## Release notes
-
-See https://github.com/boringcache/rust-action/releases.
-
-## License
-
-MIT
+- [Language actions docs](https://boringcache.com/docs#language-actions)
+- [GitHub Actions auth and trust model](https://boringcache.com/docs#actions-auth)
