@@ -11,11 +11,23 @@ Installs Rust via rustup, restores cached directories before your job runs, and 
   with:
     workspace: my-org/my-project
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
 
 - run: cargo build
 - run: cargo test
 ```
+
+## Recommended auth model
+
+For new workflows, provide a restore token to every job and only provide a save token to trusted branch/tag jobs:
+
+```yaml
+env:
+  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+  BORINGCACHE_SAVE_TOKEN: ${{ github.event_name == 'pull_request' && '' || secrets.BORINGCACHE_SAVE_TOKEN }}
+```
+
+Archive-backed caches restore normally on pull requests and the action skips save when no save-capable token is configured. In sccache proxy mode, the proxy also downgrades to read-only automatically.
 
 ## Mental model
 
@@ -55,7 +67,7 @@ What gets cached:
   with:
     workspace: my-org/my-project
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
 
 - run: cargo build --release
 ```
@@ -69,7 +81,7 @@ What gets cached:
     sccache: 'true'
     sccache-cache-size: 10G
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
 ```
 
 ### With a specific Rust version
@@ -77,7 +89,7 @@ What gets cached:
 ```yaml
 - uses: boringcache/rust-action@v1
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
   with:
     workspace: my-org/my-project
     rust-version: '1.75'
@@ -88,7 +100,7 @@ What gets cached:
 ```yaml
 - uses: boringcache/rust-action@v1
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
   with:
     workspace: my-org/my-project
     rust-version: nightly
@@ -99,7 +111,7 @@ What gets cached:
 ```yaml
 - uses: boringcache/rust-action@v1
   env:
-    BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+    BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
   with:
     workspace: my-org/my-project
     cache-target: 'false'
@@ -137,7 +149,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN }}
+      BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -157,7 +169,7 @@ jobs:
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
-| `cli-version` | No | `v1.7.2` | BoringCache CLI version. Set to `skip` to disable installation. |
+| `cli-version` | No | `v1.12.1` | BoringCache CLI version. Set to `skip` to disable installation. |
 | `workspace` | No | repo name | Workspace in `org/repo` form. Defaults to `BORINGCACHE_DEFAULT_WORKSPACE` or repo name. |
 | `cache-tag` | No | repo name | Cache tag prefix used for cargo/target/sccache tags. |
 | `rust-version` | No | auto-detected or `stable` | Rust version/channel to install. |
@@ -196,7 +208,8 @@ Cargo registries are platform-agnostic, but `target` artifacts are platform-spec
 
 | Variable | Description |
 |----------|-------------|
-| `BORINGCACHE_API_TOKEN` | API token for BoringCache authentication |
+| `BORINGCACHE_RESTORE_TOKEN` | Restore-capable token for pull requests and other read-only jobs |
+| `BORINGCACHE_SAVE_TOKEN` | Save-capable token for trusted jobs that should publish cache updates |
 | `BORINGCACHE_DEFAULT_WORKSPACE` | Default workspace if not specified in inputs |
 | `BORINGCACHE_INSTALLER_URL` | Override URL for the BoringCache installer script |
 | `BORINGCACHE_INSTALLER_SHA256` | Expected SHA256 of the installer script (recommended for integrity) |

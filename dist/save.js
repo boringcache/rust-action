@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 const core = __importStar(require("@actions/core"));
+const action_core_1 = require("@boringcache/action-core");
 const utils_1 = require("./utils");
 const path = __importStar(require("path"));
 async function run() {
@@ -53,6 +54,18 @@ async function run() {
         const exclude = core.getInput('exclude');
         if (!workspace) {
             core.info('No workspace found, skipping save');
+            return;
+        }
+        const sccacheMode = core.getState('sccacheMode') || 'local';
+        if (!(0, action_core_1.hasSaveToken)()) {
+            if (useSccache && sccacheMode === 'proxy') {
+                await (0, utils_1.stopSccacheServer)();
+                const proxyPid = core.getState('proxyPid');
+                if (proxyPid) {
+                    await (0, utils_1.stopCacheRegistryProxy)(parseInt(proxyPid, 10));
+                }
+            }
+            core.notice(`Save skipped: ${(0, action_core_1.missingSaveTokenMessage)()}`);
             return;
         }
         const cargoHome = (0, utils_1.getCargoHome)();
@@ -104,7 +117,6 @@ async function run() {
             await (0, utils_1.execBoringCache)(args);
         }
         if (useSccache) {
-            const sccacheMode = core.getState('sccacheMode') || 'local';
             if (sccacheMode === 'proxy') {
                 await (0, utils_1.stopSccacheServer)();
                 const proxyPid = core.getState('proxyPid');

@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { hasSaveToken, missingSaveTokenMessage } from '@boringcache/action-core';
 import { execBoringCache, hasGitDependencies, getCargoHome, getSccacheDir, stopSccacheServer, stopCacheRegistryProxy } from './utils';
 import * as path from 'path';
 
@@ -20,6 +21,19 @@ async function run(): Promise<void> {
 
     if (!workspace) {
       core.info('No workspace found, skipping save');
+      return;
+    }
+
+    const sccacheMode = core.getState('sccacheMode') || 'local';
+    if (!hasSaveToken()) {
+      if (useSccache && sccacheMode === 'proxy') {
+        await stopSccacheServer();
+        const proxyPid = core.getState('proxyPid');
+        if (proxyPid) {
+          await stopCacheRegistryProxy(parseInt(proxyPid, 10));
+        }
+      }
+      core.notice(`Save skipped: ${missingSaveTokenMessage()}`);
       return;
     }
 
@@ -71,8 +85,6 @@ async function run(): Promise<void> {
     }
 
     if (useSccache) {
-      const sccacheMode = core.getState('sccacheMode') || 'local';
-
       if (sccacheMode === 'proxy') {
         await stopSccacheServer();
         const proxyPid = core.getState('proxyPid');
