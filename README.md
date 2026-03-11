@@ -1,6 +1,10 @@
 # boringcache/rust-action
 
-Set up Rust via rustup and cache Cargo plus build outputs with BoringCache.
+Set up Rust and cache Cargo plus build outputs.
+
+## When to use it
+
+Choose this for Cargo builds, especially if you also want sccache without wiring it by hand.
 
 ## Quick start
 
@@ -15,7 +19,13 @@ Set up Rust via rustup and cache Cargo plus build outputs with BoringCache.
 - run: cargo build --release
 ```
 
-## What it caches
+## Trust model
+
+- Restore works on pull requests with `BORINGCACHE_RESTORE_TOKEN`.
+- Save is skipped automatically when no save-capable token is configured.
+- When `sccache-mode: proxy` is enabled, restore-only jobs stay read-only.
+
+## What it handles
 
 - Rust toolchain from `rust-toolchain.toml`, `rust-toolchain`, or `.tool-versions`.
 - Cargo registry and git dependencies.
@@ -47,7 +57,7 @@ When `sccache-mode: proxy` is enabled, the proxy auto-downgrades to read-only wh
 | `sccache-hit` | Whether sccache cache was restored. |
 | `workspace` | Resolved workspace name. |
 
-## Docs
+## Learn more
 
 - [Language actions docs](https://boringcache.com/docs#language-actions)
 - [GitHub Actions auth and trust model](https://boringcache.com/docs#actions-auth)
